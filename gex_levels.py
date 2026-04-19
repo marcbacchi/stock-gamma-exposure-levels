@@ -302,6 +302,53 @@ def format_summary(ticker, spot, levels, run_ts):
 
 
 # =============================================================================
+# Output: generate a TOS-ready ThinkScript block for one ticker
+# =============================================================================
+def format_thinkscript(ticker, spot, levels, run_ts):
+    """
+    Return a ThinkScript snippet the user can paste directly into TOS:
+      Studies → Edit Studies → Create New Study → paste → Save
+
+    Lines use only horizontal plot lines + AddLabel so there are no
+    conflicts with existing chart studies.
+    """
+    cw = levels.get("call_wall")
+    pw = levels.get("put_wall")
+    gf = levels.get("gamma_flip")
+    oi = levels.get("top_oi", [])
+
+    L = []
+    L.append(f"# {'─' * 56}")
+    L.append(f"# TOS ThinkScript — GEX Levels — {ticker} — {run_ts}")
+    L.append(f"# Spot at scan time: ${spot:.2f}")
+    L.append(f"# Studies → Edit Studies → Create New Study → paste → Save")
+    L.append(f"# {'─' * 56}")
+    L.append("")
+
+    def plot_level(name, value, color, label_text):
+        L.append(f"plot {name} = {value:.2f};")
+        L.append(f"{name}.SetDefaultColor(Color.{color});")
+        L.append(f"{name}.SetLineWeight(2);")
+        L.append(f"{name}.SetStyle(Curve.SHORT_DASH);")
+        L.append(f"{name}.SetPaintingStrategy(PaintingStrategy.HORIZONTAL);")
+        L.append(f'AddLabel(yes, "{label_text}: {value:.2f}", Color.{color});')
+        L.append("")
+
+    if cw is not None:
+        plot_level("CallWall", cw, "GREEN",  "Call Wall")
+    if pw is not None:
+        plot_level("PutWall",  pw, "RED",    "Put Wall")
+    if gf is not None:
+        plot_level("GammaFlip", gf, "YELLOW", "Gamma Flip")
+
+    # Top OI strikes in cyan, numbered
+    for i, strike in enumerate(oi[:3], 1):
+        plot_level(f"TopOI{i}", strike, "CYAN", f"Top OI #{i}")
+
+    return "\n".join(L)
+
+
+# =============================================================================
 # Main
 # =============================================================================
 def run():
@@ -314,6 +361,7 @@ def run():
 
     output_filename = f"levels_{file_ts}.txt"
     output_lines = [f"GEX Levels Report — {run_ts}\n"]
+    thinkscript_blocks = []  # collected after all tickers, appended at end of file
 
     tickers = prompt_tickers()
     print(f"\nRun timestamp: {run_ts}")
@@ -372,6 +420,17 @@ def run():
         print(summary)
         output_lines.append(summary)
         output_lines.append("")
+
+        thinkscript_blocks.append(format_thinkscript(ticker_symbol, spot, levels, run_ts))
+
+    # --- append ThinkScript section to output ---
+    if thinkscript_blocks:
+        output_lines.append("=" * 60)
+        output_lines.append("  TOS ThinkScript — copy the block(s) below into TOS")
+        output_lines.append("  Studies → Edit Studies → Create New Study → paste → Save")
+        output_lines.append("=" * 60)
+        output_lines.append("")
+        output_lines.extend(thinkscript_blocks)
 
     # --- save to file ---
     output_text = "\n".join(output_lines)
