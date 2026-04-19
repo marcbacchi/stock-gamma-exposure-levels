@@ -10,8 +10,11 @@
 #
 # RUN:
 #   python gex_levels.py
+#   → You will be prompted to enter one or more ticker symbols (e.g. SPY QQQ IWM)
 # =============================================================================
 
+import re
+import sys
 import warnings
 from datetime import date, datetime
 from math import log, sqrt
@@ -34,11 +37,73 @@ warnings.filterwarnings("ignore", message=".*no price data.*")
 # the call/put wall or OI levels, which dominate the output.
 RISK_FREE_RATE = 0.045
 
-# =============================================================================
-# CONFIGURATION — edit tickers here
-# =============================================================================
-TICKERS = ["SPY", "QQQ"]
 CONTRACT_SIZE = 100  # standard equity options contract size
+
+# Ticker symbols are 1–6 uppercase letters, optionally followed by a dot
+# and one letter (e.g. BRK.B). Hyphens allowed for yfinance variants (BRK-B).
+_TICKER_RE = re.compile(r'^[A-Z]{1,6}([.\-][A-Z])?$')
+
+
+# =============================================================================
+# Input: prompt the user for one or more ticker symbols and validate them
+# =============================================================================
+def prompt_tickers():
+    """
+    Ask the user for tickers, validate format, then confirm each resolves to
+    a live price via yfinance. Returns a deduplicated list of valid symbols.
+    """
+    print("Enter one or more ticker symbols separated by spaces or commas.")
+    print("  Example:  SPY QQQ IWM   or   spy, qqq, iwm")
+
+    raw = input("\nTickers: ").strip()
+
+    if not raw:
+        print("\nERROR: No input received. Please enter at least one ticker symbol.")
+        sys.exit(1)
+
+    # split on any mix of commas and whitespace
+    tokens = [t.upper() for t in re.split(r'[,\s]+', raw) if t.strip()]
+
+    if not tokens:
+        print("\nERROR: Could not parse any tokens from your input.")
+        sys.exit(1)
+
+    # deduplicate while preserving entry order
+    seen, unique = set(), []
+    for t in tokens:
+        if t not in seen:
+            seen.add(t)
+            unique.append(t)
+
+    # format check — catch obvious non-tickers before hitting the network
+    bad_format = [t for t in unique if not _TICKER_RE.match(t)]
+    if bad_format:
+        print(f"\nERROR: The following do not look like valid ticker symbols: {', '.join(bad_format)}")
+        print("  Tickers must be 1–6 letters, e.g. SPY, QQQ, BRK.B")
+        sys.exit(1)
+
+    # live check — verify each symbol returns a real price from Yahoo Finance
+    print(f"\nValidating {', '.join(unique)} ...")
+    valid = []
+    for sym in unique:
+        try:
+            price = float(yf.Ticker(sym).fast_info.last_price)
+            if price > 0:
+                valid.append(sym)
+            else:
+                print(f"  WARNING: '{sym}' — no price data returned (may be delisted or unsupported), skipping.")
+        except Exception:
+            print(f"  WARNING: '{sym}' — could not be resolved by Yahoo Finance, skipping.")
+
+    if not valid:
+        print("\nERROR: No valid tickers remain after validation. Exiting.")
+        sys.exit(1)
+
+    skipped = [t for t in unique if t not in valid]
+    if skipped:
+        print(f"  Proceeding with valid tickers: {', '.join(valid)}")
+
+    return valid
 
 
 # =============================================================================
@@ -250,9 +315,10 @@ def run():
     output_filename = f"levels_{file_ts}.txt"
     output_lines = [f"GEX Levels Report — {run_ts}\n"]
 
-    print(f"Run timestamp: {run_ts}")
+    tickers = prompt_tickers()
+    print(f"\nRun timestamp: {run_ts}")
 
-    for ticker_symbol in TICKERS:
+    for ticker_symbol in tickers:
         print(f"\nFetching data for {ticker_symbol}...")
 
         try:
